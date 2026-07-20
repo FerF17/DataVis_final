@@ -1,0 +1,35 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# ---- Entornos virtuales ----
+.venv/
+venv/
+env/
+msd_env/
+.env
+
+# ---- Streamlit ----
+# Nunca subir secretos al repo publico.
+.streamlit/secrets.toml
+
+# ---- Datos generados ----
+# Decision de deploy: los datos se REGENERAN en la nube desde Yahoo Finance en el
+# primer arranque (app.py -> build_dataset()). Por eso salidas/ no se versiona.
+# Si prefieres un arranque offline/robusto, comenta la linea siguiente y commitea
+# salidas/market_data.parquet + salidas/drawdown.parquet (ver README §Deploy).
+salidas/
+
+# Cache de yfinance
+.cache/
+
+# ---- Documentacion interna (no se publica) ----
+# Plan de trabajo / bitacora interna de la maestria: se mantiene local, no en el repo.
+PLAN_INTERNO.md
+
+# ---- Sistema operativo ----
+.DS_Store
+Thumbs.db
+desktop.ini

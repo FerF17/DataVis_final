@@ -1,0 +1,13 @@
+# Dependencias del dashboard "Anatomia del riesgo de mercado".
+# Versiones fijadas a las probadas en desarrollo (ver README §Deploy).
+# Requiere Python 3.11+ (Streamlit Community Cloud: elegir 3.12 o 3.13).
+#
+# Pin estricto de streamlit: la app usa st.segmented_control, st.container(key=...,
+# horizontal=..., vertical_alignment=...) y el theme extendido de .streamlit/config.toml
+# (theme.font con URL, baseRadius, buttonRadius), APIs que no existen en Streamlit <1.5x.
+streamlit==1.56.0
+plotly==6.7.0
+pandas==3.0.2
+numpy==2.4.4
+yfinance==1.5.1
+pyarrow==23.0.1

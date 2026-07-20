@@ -1,0 +1,19 @@
+[theme]
+base = "light"
+primaryColor = "#1A2B4A"
+backgroundColor = "#F2F1EF"
+secondaryBackgroundColor = "#FBF9F5"
+textColor = "#1A2B4A"
+borderColor = "#E4DFC9"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap, sans-serif"
+headingFont = "Georgia, Cambria, 'Times New Roman', serif"
+baseRadius = "1.25rem"
+buttonRadius = "full"
+showWidgetBorder = false
+
+[theme.sidebar]
+backgroundColor = "#FBF4DC"
+borderColor = "#E4DFC9"
+
+[server]
+headless = true
