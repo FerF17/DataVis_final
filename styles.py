@@ -198,17 +198,66 @@ div[class*="st-key-topbar"] {{
   text-align: right;
   white-space: nowrap;
 }}
-/* el segmented_control vive dentro del topbar azul: fondo/track translucido */
+/* --- Navegacion: segmented_control dentro del topbar azul ----------------
+   Regla de oro: TODAS las pestanas se leen siempre. El estado (inactiva /
+   hover / activa) se codifica con fondo y peso tipografico, nunca haciendo
+   desaparecer el texto. Sin este bloque, los botones heredan el fondo crema
+   del theme y quedan crema-sobre-crema. */
 div[class*="st-key-topbar"] div[class*="st-key-nav_tab"] {{
-  background: rgba(181, 210, 230, 0.14);
+  background: rgba(0, 0, 0, 0.16);
   border-radius: 999px;
-  padding: 0.2rem;
+  padding: 0.22rem;
+  gap: 0.15rem;
 }}
-div[class*="st-key-topbar"] button p {{ color: rgba(255,241,231,0.85) !important; }}
-div[class*="st-key-topbar"] button[aria-checked="true"] {{
+
+/* Estado base (pestana inactiva): pildora translucida, texto crema legible */
+div[class*="st-key-topbar"] div[class*="st-key-nav_tab"] button,
+div[class*="st-key-topbar"] button[data-testid="stBaseButton-segmented_control"] {{
+  background: rgba(255, 241, 231, 0.10) !important;
+  border: 1px solid rgba(255, 241, 231, 0.20) !important;
+  border-radius: 999px !important;
+  transition: background 140ms ease, border-color 140ms ease;
+}}
+div[class*="st-key-topbar"] div[class*="st-key-nav_tab"] button p,
+div[class*="st-key-topbar"] div[class*="st-key-nav_tab"] button div,
+div[class*="st-key-topbar"] div[class*="st-key-nav_tab"] button span {{
+  color: {CREAM} !important;
+  opacity: 1 !important;
+  font-weight: 500 !important;
+}}
+
+/* Hover / foco de teclado: se aclara el fondo y aparece el borde niebla */
+div[class*="st-key-topbar"] div[class*="st-key-nav_tab"] button:hover,
+div[class*="st-key-topbar"] div[class*="st-key-nav_tab"] button:focus-visible {{
+  background: rgba(181, 210, 230, 0.30) !important;
+  border-color: {MIST} !important;
+}}
+div[class*="st-key-topbar"] div[class*="st-key-nav_tab"] button:hover p,
+div[class*="st-key-topbar"] div[class*="st-key-nav_tab"] button:focus-visible p {{
+  color: #FFFFFF !important;
+}}
+
+/* Pestana activa: inversion completa — crema solido con tinta azul.
+   Se cubren el testid de Streamlit y los atributos ARIA por si cambia. */
+div[class*="st-key-topbar"] button[data-testid="stBaseButton-segmented_controlActive"],
+div[class*="st-key-topbar"] div[class*="st-key-nav_tab"] button[aria-checked="true"],
+div[class*="st-key-topbar"] div[class*="st-key-nav_tab"] button[aria-pressed="true"] {{
   background: {CREAM} !important;
+  border-color: {CREAM} !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }}
-div[class*="st-key-topbar"] button[aria-checked="true"] p {{ color: {DEEP} !important; font-weight: 700; }}
+div[class*="st-key-topbar"] button[data-testid="stBaseButton-segmented_controlActive"] p,
+div[class*="st-key-topbar"] button[data-testid="stBaseButton-segmented_controlActive"] div,
+div[class*="st-key-topbar"] button[data-testid="stBaseButton-segmented_controlActive"] span,
+div[class*="st-key-topbar"] div[class*="st-key-nav_tab"] button[aria-checked="true"] p,
+div[class*="st-key-topbar"] div[class*="st-key-nav_tab"] button[aria-pressed="true"] p {{
+  color: {DEEP} !important;
+  font-weight: 700 !important;
+}}
+div[class*="st-key-topbar"] button[data-testid="stBaseButton-segmented_controlActive"]:hover {{
+  background: {MIST} !important;
+  border-color: {MIST} !important;
+}}
 
 /* --- Cards: st.container(key=f"card-{{variant}}-{{name}}", border=True) -- */
 div[class*="st-key-card-light-"] {{
