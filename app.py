@@ -2,15 +2,15 @@
 app.py
 Dashboard "Anatomia del riesgo de mercado -- Calma vs Crisis".
 
-Fases A/B/C completas:
-  - Vista 1  Overview temporal          (Fase B)
-  - Vista 2  Volatilidad por regimen    (Fase B)
-  - Vista 3  Correlacion por regimen    (Fase B, MVP) + correlacion rolling de un par (Fase C)
-  - Vista 4  Drawdown (underwater)       (Fase C)
-  - Vista 5  Distribucion de retornos    (Fase C)
-  - Vista 6  Red de contagio             (Fase C, opcional / stretch)
+Vistas:
+  - Vista 1  Overview temporal
+  - Vista 2  Volatilidad por regimen
+  - Vista 3  Correlacion por regimen (MVP) + correlacion rolling de un par
+  - Vista 4  Drawdown (underwater)
+  - Vista 5  Distribucion de retornos
+  - Vista 6  Red de contagio (opcional / stretch)
 
-Interacciones (Fase C):
+Interacciones:
   - Filtro global de regimen + selector de episodio (COVID-2020, tasas-2022) o rango manual.
   - Seleccion de activos (multiselect) que aplica a las 6 vistas.
   - Resaltado enlazado: un activo "en foco" (sidebar, via st.session_state) se resalta
@@ -18,8 +18,13 @@ Interacciones (Fase C):
   - Selector de par + correlacion rolling del par elegido.
   - Tooltips enriquecidos y hover unificado en las series temporales.
 
-Datos: importa cargar_datos()/build_dataset() de pipeline.py. En local usa el parquet
-cacheado; en la nube (sin parquet) lo regenera desde Yahoo Finance en el primer arranque.
+Capas transversales:
+  - `narrativa.py`  -- lectura guiada parametrizada: cada pantalla se explica sola
+    para la combinacion de ETFs, rango, umbral y regimen que tenga el usuario.
+  - `reporte.py`    -- self-report en PDF con las seis pantallas, disponible al pie
+    de cada vista.
+
+Datos: importa cargar_datos()/build_dataset() de pipeline.py.
 Ejecutar: streamlit run app.py
 """
 
@@ -29,19 +34,13 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
+import narrativa
+import reporte
 import styles
+from narrativa import ETIQUETAS_ACTIVO, SIN_FOCO
 from pipeline import MIN_OBS_CORR
 
-ETIQUETAS_ACTIVO = {
-    "SPY": "SPY (Acciones)", "QQQ": "QQQ (Tech)", "TLT": "TLT (Bonos LP)",
-    "GLD": "GLD (Oro)", "HYG": "HYG (HY Credito)", "VNQ": "VNQ (Real Estate)",
-    "EEM": "EEM (Emergentes)", "DBC": "DBC (Commodities)", "UUP": "UUP (Dolar)",
-    "BTC-USD": "BTC-USD (Cripto)",
-}
-
 NAV_OPTIONS = ["Overview", "Volatilidad", "Correlacion", "Drawdown", "Distribucion", "Contagio"]
-
-SIN_FOCO = "(ninguno)"
 
 
 # ============================================================================
@@ -65,19 +64,32 @@ def _opacidad(activo, foco):
     """Opacidad de una traza segun el activo en foco (resaltado enlazado)."""
     if foco == SIN_FOCO:
         return 1.0
-    return 1.0 if activo == foco else 0.18
+    return 1.0 if activo == foco else 0.16
 
 
-def _ancho(activo, foco, base=1.6):
+def _ancho(activo, foco, base=1.9):
     if foco == SIN_FOCO:
         return base
-    return base + 1.8 if activo == foco else base * 0.7
+    return base + 1.4 if activo == foco else base * 0.65
+
+
+def _bandas_crisis(fig, crisis_bool, **kwargs):
+    """Sombreado calido de los tramos continuos de crisis."""
+    crisis_bool = crisis_bool.fillna(False)
+    if not crisis_bool.any():
+        return
+    bloques = (crisis_bool != crisis_bool.shift()).cumsum()
+    for _, grupo in crisis_bool[crisis_bool].groupby(bloques[crisis_bool]):
+        fig.add_vrect(x0=grupo.index.min(), x1=grupo.index.max(),
+                      fillcolor=styles.CRISIS, opacity=0.09, line_width=0, layer="below",
+                      **kwargs)
 
 
 # ============================================================================
 # Vista 1 - Overview temporal
 # ============================================================================
-def render_overview(precios, vix, crisis_din, activos_sel, umbral_vix, rango_fechas, foco):
+def render_overview(precios, vix, crisis_din, activos_sel, umbral_vix, rango_fechas,
+                    regimen_filtro, foco):
     vix_actual = vix.iloc[-1] if len(vix) else float("nan")
     regimen_actual = "Crisis" if vix_actual > umbral_vix else "Calma"
     pct_crisis = 100 * crisis_din.reindex(precios.index).fillna(False).mean()
@@ -86,79 +98,83 @@ def render_overview(precios, vix, crisis_din, activos_sel, umbral_vix, rango_fec
     with col1:
         with styles.card("vix", variant="dark"):
             styles.icon_corner("\U0001F321")
-            styles.hero_metric(f"{vix_actual:.1f}", "VIX ACTUAL")
+            styles.hero_metric(f"{vix_actual:.1f}", "VIX AL CIERRE DEL RANGO")
             st.markdown(
-                styles.badge(regimen_actual, variant="teal" if regimen_actual == "Calma" else "red"),
+                styles.badge(regimen_actual, variant="mist"),
                 unsafe_allow_html=True,
             )
     with col2:
         with styles.card("umbral"):
-            styles.hero_metric(f"{umbral_vix}", "UMBRAL CRISIS", sub="VIX > umbral")
+            styles.hero_metric(f"{umbral_vix}", "UMBRAL DE CRISIS", sub="Se marca crisis si VIX supera este valor")
     with col3:
         with styles.card("pct-crisis"):
-            styles.hero_metric(f"{pct_crisis:.1f}%", "DIAS EN CRISIS (rango)")
-            styles.progress_pill(pct_crisis, color=styles.RED)
+            styles.hero_metric(f"{pct_crisis:.1f}%", "DIAS EN CRISIS (RANGO)")
+            styles.progress_pill(pct_crisis, color=styles.CRISIS)
     with col4:
         with styles.card("activos"):
             styles.hero_metric(f"{len(activos_sel)}", "ACTIVOS EN VISTA",
-                                sub=f"{rango_fechas[0]} → {rango_fechas[1]}")
+                               sub=f"{rango_fechas[0]} → {rango_fechas[1]}")
 
     with styles.card("overview-chart"):
         styles.icon_corner("↗")
         styles.section_title(
             "Overview temporal",
-            "Precios normalizados (base 100) por activo, sombreado de crisis y VIX con umbral.",
+            "Precios normalizados a base 100, sombreado de los episodios de crisis y el VIX "
+            "que los origina, en el mismo eje de tiempo.",
         )
+
+        bloque = narrativa.overview(precios, vix, crisis_din, activos_sel, umbral_vix,
+                                    rango_fechas, regimen_filtro, foco)
+        styles.lectura(bloque.eyebrow, bloque.lead, bloque.puntos)
 
         precios_norm = precios / precios.bfill().iloc[0] * 100
         fig1 = make_subplots(
-            rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.06,
+            rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.07,
         )
 
-        crisis_bool = crisis_din.reindex(precios.index).fillna(False)
-        if crisis_bool.any():
-            bloques = (crisis_bool != crisis_bool.shift()).cumsum()
-            for _, grupo in crisis_bool[crisis_bool].groupby(bloques[crisis_bool]):
-                x0, x1 = grupo.index.min(), grupo.index.max()
-                fig1.add_vrect(x0=x0, x1=x1, fillcolor=styles.RED, opacity=0.10, line_width=0, row=1, col=1)
-                fig1.add_vrect(x0=x0, x1=x1, fillcolor=styles.RED, opacity=0.10, line_width=0, row=2, col=1)
+        crisis_bool = crisis_din.reindex(precios.index)
+        _bandas_crisis(fig1, crisis_bool, row=1, col=1)
+        _bandas_crisis(fig1, crisis_bool, row=2, col=1)
 
         for activo in activos_sel:
-            color = styles.color_activo(activo)
             fig1.add_trace(
                 go.Scatter(
                     x=precios_norm.index, y=precios_norm[activo], mode="lines",
                     name=ETIQUETAS_ACTIVO.get(activo, activo),
-                    line=dict(color=color, width=_ancho(activo, foco)),
+                    line=dict(color=styles.color_activo(activo), width=_ancho(activo, foco)),
                     opacity=_opacidad(activo, foco),
                     hovertemplate=f"{ETIQUETAS_ACTIVO.get(activo, activo)}<br>%{{x|%Y-%m-%d}}: %{{y:.1f}}<extra></extra>",
                 ),
                 row=1, col=1,
             )
+        fig1.add_hline(y=100, line_dash="dot", line_color=styles.GRID, line_width=1.5, row=1, col=1)
 
         fig1.add_trace(
             go.Scatter(
-                x=vix.index, y=vix, mode="lines", name="VIX", line=dict(color=styles.NAVY, width=1.4),
+                x=vix.index, y=vix, mode="lines", name="VIX",
+                line=dict(color=styles.DEEP, width=1.4),
+                fill="tozeroy", fillcolor="rgba(50, 96, 128, 0.08)",
                 hovertemplate="VIX<br>%{x|%Y-%m-%d}: %{y:.1f}<extra></extra>", showlegend=False,
             ),
             row=2, col=1,
         )
         fig1.add_hline(
-            y=umbral_vix, line_dash="dash", line_color=styles.RED, row=2, col=1,
+            y=umbral_vix, line_dash="dash", line_color=styles.CRISIS, line_width=1.5, row=2, col=1,
             annotation_text=f"umbral {umbral_vix}", annotation_position="top left",
-            annotation_font_color=styles.RED,
+            annotation_font=dict(color=styles.CRISIS, size=11),
         )
 
-        fig1.update_yaxes(title_text="Precio (base 100)", gridcolor=styles.GRID, row=1, col=1)
-        fig1.update_yaxes(title_text="VIX", gridcolor=styles.GRID, row=2, col=1)
-        fig1.update_xaxes(gridcolor=styles.GRID, row=2, col=1)
+        fig1.update_yaxes(styles.eje(title_text="Precio (base 100)"), row=1, col=1)
+        fig1.update_yaxes(styles.eje(title_text="VIX"), row=2, col=1)
+        fig1.update_xaxes(styles.eje(showgrid=False), row=1, col=1)
+        fig1.update_xaxes(styles.eje(), row=2, col=1)
         fig1.update_layout(
-            height=520,
-            **styles.PLOTLY_TRANSPARENT,
-            font=dict(family=styles.FONT_SANS, color=styles.NAVY),
+            height=540,
+            **styles.PLOTLY_BASE,
             hovermode="x unified",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            margin=dict(t=30, b=10, l=10, r=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="left", x=0,
+                        font=dict(size=11), bgcolor="rgba(0,0,0,0)"),
+            margin=dict(t=36, b=10, l=10, r=10),
         )
         st.plotly_chart(fig1, width="stretch")
 
@@ -168,31 +184,38 @@ def render_overview(precios, vix, crisis_din, activos_sel, umbral_vix, rango_fec
 # ============================================================================
 def render_volatilidad(vol, regimen_din, regimen_filtro, activos_sel, foco):
     with styles.card("volatilidad"):
+        styles.icon_corner("▮")
         styles.section_title(
             "Volatilidad por regimen",
-            "Volatilidad realizada anualizada (rolling 21d, √252) promedio por activo, Calma vs Crisis.",
+            "Volatilidad realizada anualizada (desviacion movil de 21 dias × √252), promedio "
+            "por activo en calma y en crisis.",
         )
 
-        vol_calma = vol[regimen_din.reindex(vol.index) == "Calma"].mean() * 100
-        vol_crisis = vol[regimen_din.reindex(vol.index) == "Crisis"].mean() * 100
+        bloque = narrativa.volatilidad(vol, regimen_din, regimen_filtro, activos_sel, foco)
+        styles.lectura(bloque.eyebrow, bloque.lead, bloque.puntos)
+
+        vol_calma = (vol[regimen_din.reindex(vol.index) == "Calma"].mean() * 100).reindex(activos_sel)
+        vol_crisis = (vol[regimen_din.reindex(vol.index) == "Crisis"].mean() * 100).reindex(activos_sel)
 
         etiquetas_x = [ETIQUETAS_ACTIVO.get(a, a) for a in activos_sel]
         # Resaltado enlazado: la barra del activo en foco se opaca menos que el resto.
-        op = [1.0 if (foco == SIN_FOCO or a == foco) else 0.28 for a in activos_sel]
+        op = [1.0 if (foco == SIN_FOCO or a == foco) else 0.25 for a in activos_sel]
 
         fig2 = go.Figure()
         if regimen_filtro in ("Ambos", "Calma"):
             fig2.add_trace(go.Bar(
-                x=etiquetas_x, y=vol_calma.values, name="Calma", marker_color=styles.TEAL,
-                marker_opacity=op,
-                text=[f"{v:.0f}" if pd.notna(v) else "" for v in vol_calma.values], textposition="outside",
+                x=etiquetas_x, y=vol_calma.values, name="Calma", marker_color=styles.CALMA,
+                marker_opacity=op, marker_line=dict(color="white", width=1.5),
+                text=[f"{v:.0f}" if pd.notna(v) else "" for v in vol_calma.values],
+                textposition="outside", textfont=dict(size=10, color=styles.TEXT_MUTED),
                 hovertemplate="%{x}<br>Calma: %{y:.1f}%<extra></extra>",
             ))
         if regimen_filtro in ("Ambos", "Crisis"):
             fig2.add_trace(go.Bar(
-                x=etiquetas_x, y=vol_crisis.values, name="Crisis", marker_color=styles.RED,
-                marker_opacity=op,
-                text=[f"{v:.0f}" if pd.notna(v) else "" for v in vol_crisis.values], textposition="outside",
+                x=etiquetas_x, y=vol_crisis.values, name="Crisis", marker_color=styles.CRISIS,
+                marker_opacity=op, marker_line=dict(color="white", width=1.5),
+                text=[f"{v:.0f}" if pd.notna(v) else "" for v in vol_crisis.values],
+                textposition="outside", textfont=dict(size=10, color=styles.TEXT_MUTED),
                 hovertemplate="%{x}<br>Crisis: %{y:.1f}%<extra></extra>",
             ))
 
@@ -200,39 +223,47 @@ def render_volatilidad(vol, regimen_din, regimen_filtro, activos_sel, foco):
         mult = (vol_crisis / vol_calma).replace([np.inf, -np.inf], np.nan).dropna()
         if len(mult) > 0:
             top = mult.sort_values(ascending=False).head(2)
-            detalle = ", ".join(f"{a} ×{v:.1f}" for a, v in top.items())
-            titulo_vol += f"  —  {detalle}"
+            titulo_vol += "  ·  " + ", ".join(f"{a} ×{v:.1f}" for a, v in top.items())
 
         fig2.update_layout(
-            title=dict(text=titulo_vol, font=dict(family=styles.FONT_SERIF, size=17, color=styles.NAVY)),
-            barmode="group",
-            **styles.PLOTLY_TRANSPARENT,
-            font=dict(family=styles.FONT_SANS, color=styles.NAVY),
-            yaxis=dict(title="Volatilidad anualizada (%)", gridcolor=styles.GRID),
-            xaxis=dict(gridcolor=styles.GRID),
-            legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="right", x=1),
-            height=460,
-            margin=dict(t=70, b=10, l=10, r=10),
+            title=dict(text=titulo_vol,
+                       font=dict(family=styles.FONT_SERIF, size=17, color=styles.DEEP)),
+            barmode="group", bargap=0.3, bargroupgap=0.06,
+            **styles.PLOTLY_BASE,
+            yaxis=styles.eje(title="Volatilidad anualizada (%)"),
+            xaxis=styles.eje(showgrid=False),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                        font=dict(size=11), bgcolor="rgba(0,0,0,0)"),
+            height=470,
+            margin=dict(t=72, b=10, l=10, r=10),
         )
         st.plotly_chart(fig2, width="stretch")
 
+    with styles.card("vol-tabla", variant="soft"):
+        styles.section_title("Datos de respaldo", "Los mismos numeros del grafico, para citar sin estimar a ojo.")
+        st.dataframe(bloque.tabla, width="stretch", hide_index=True)
+
 
 # ============================================================================
-# Vista 3 - Matriz de correlacion por regimen (MVP) + correlacion rolling de un par
+# Vista 3 - Matriz de correlacion por regimen (MVP) + correlacion rolling
 # ============================================================================
 def render_correlacion(retornos, regimen_din, regimen_filtro, activos_sel, min_obs_corr,
                        crisis_din, umbral_vix, foco):
     with styles.card("correlacion", variant="mvp"):
         styles.section_title(
             "Matriz de correlacion por regimen",
-            "Colormap divergente (RdBu) centrado en 0, segura para daltonicos. El bloque de riesgo "
-            "converge hacia 1 en crisis; el refugio real (bonos largos) se desacopla mas.",
-            badge_html=styles.badge("MVP · PRIORIDAD #1", variant="red"),
+            "Escala divergente centrada en 0 y segura para daltonismo: frio = cobertura, "
+            "neutro = independencia, calido = se mueven juntos.",
+            badge_html=styles.badge("MVP · prioridad #1", variant="red"),
         )
 
         if len(activos_sel) < 2:
             st.info("Seleccione al menos 2 activos para calcular la matriz de correlacion.")
             return
+
+        bloque = narrativa.correlacion(retornos, regimen_din, regimen_filtro, activos_sel,
+                                       min_obs_corr, foco)
+        styles.lectura(bloque.eyebrow, bloque.lead, bloque.puntos)
 
         etiquetas_x = [ETIQUETAS_ACTIVO.get(a, a) for a in activos_sel]
         regimen_ret = regimen_din.reindex(retornos.index)
@@ -244,7 +275,8 @@ def render_correlacion(retornos, regimen_din, regimen_filtro, activos_sel, min_o
         if n_crisis < min_obs_corr:
             st.warning(
                 f"Solo hay {n_crisis} dias de Crisis en el rango/umbral seleccionado "
-                f"(minimo recomendado: {min_obs_corr}). La matriz de Crisis puede ser poco confiable o mostrar NaN."
+                f"(minimo recomendado: {min_obs_corr}). La matriz de Crisis puede ser poco "
+                f"confiable o mostrar celdas vacias."
             )
 
         paneles = []
@@ -254,53 +286,59 @@ def render_correlacion(retornos, regimen_din, regimen_filtro, activos_sel, min_o
             paneles.append(("CRISIS", corr_crisis, n_crisis))
 
         fig3 = make_subplots(
-            rows=1, cols=len(paneles), horizontal_spacing=0.12,
-            subplot_titles=[f"{nombre}  (n={n} dias)" for nombre, _, n in paneles],
+            rows=1, cols=len(paneles), horizontal_spacing=0.13,
+            subplot_titles=[f"{nombre}  ·  n={n} dias" for nombre, _, n in paneles],
         )
         for col_idx, (_, corr, _) in enumerate(paneles, start=1):
             fig3.add_trace(
                 go.Heatmap(
                     z=corr.values, x=etiquetas_x, y=etiquetas_x, coloraxis="coloraxis",
-                    texttemplate="%{z:.2f}", textfont=dict(size=11),
+                    xgap=2, ygap=2,
+                    texttemplate="%{z:.2f}", textfont=dict(size=10),
                     hovertemplate="%{y} vs %{x}: %{z:.2f}<extra></extra>",
                 ),
                 row=1, col=col_idx,
             )
-            fig3.update_yaxes(autorange="reversed", row=1, col=col_idx)
+            fig3.update_yaxes(autorange="reversed", showgrid=False,
+                              tickfont=dict(size=10, color=styles.TEXT_MUTED), row=1, col=col_idx)
+            fig3.update_xaxes(showgrid=False, tickangle=-35,
+                              tickfont=dict(size=10, color=styles.TEXT_MUTED), row=1, col=col_idx)
             # Resaltado enlazado: recuadro sobre la fila/columna del activo en foco.
             if foco != SIN_FOCO and foco in activos_sel:
                 j = activos_sel.index(foco)
-                fig3.add_shape(
-                    type="rect", xref=f"x{col_idx if col_idx > 1 else ''}",
-                    yref=f"y{col_idx if col_idx > 1 else ''}",
-                    x0=-0.5, x1=len(activos_sel) - 0.5, y0=j - 0.5, y1=j + 0.5,
-                    line=dict(color=styles.NAVY, width=2.5), fillcolor="rgba(0,0,0,0)",
-                    row=1, col=col_idx,
-                )
-                fig3.add_shape(
-                    type="rect", x0=j - 0.5, x1=j + 0.5, y0=-0.5, y1=len(activos_sel) - 0.5,
-                    line=dict(color=styles.NAVY, width=2.5), fillcolor="rgba(0,0,0,0)",
-                    row=1, col=col_idx,
-                )
+                for x0, x1, y0, y1 in [
+                    (-0.5, len(activos_sel) - 0.5, j - 0.5, j + 0.5),
+                    (j - 0.5, j + 0.5, -0.5, len(activos_sel) - 0.5),
+                ]:
+                    fig3.add_shape(
+                        type="rect", x0=x0, x1=x1, y0=y0, y1=y1,
+                        line=dict(color=styles.DEEP, width=2.2), fillcolor="rgba(0,0,0,0)",
+                        row=1, col=col_idx,
+                    )
 
         fig3.update_layout(
-            coloraxis=dict(colorscale="RdBu_r", cmin=-1, cmax=1,
-                            colorbar=dict(title="Correlacion", thickness=14)),
-            **styles.PLOTLY_TRANSPARENT,
-            font=dict(family=styles.FONT_SANS, color=styles.NAVY),
-            height=520,
-            margin=dict(t=50, b=10, l=10, r=10),
+            coloraxis=dict(colorscale=styles.ESCALA_CORR, cmin=-1, cmax=1,
+                           colorbar=dict(title=dict(text="ρ", font=dict(size=12)),
+                                         thickness=12, outlinewidth=0, len=0.85,
+                                         tickfont=dict(size=10, color=styles.TEXT_MUTED))),
+            **styles.PLOTLY_BASE,
+            height=540,
+            margin=dict(t=54, b=10, l=10, r=10),
         )
-        fig3.update_annotations(font=dict(family=styles.FONT_SERIF, size=14, color=styles.NAVY))
+        fig3.update_annotations(font=dict(family=styles.FONT_SERIF, size=13, color=styles.DEEP))
         st.plotly_chart(fig3, width="stretch")
 
-    # --- Correlacion rolling de un par elegido (interaccion Fase C, paso 14) ---
+        if bloque.tabla is not None:
+            styles.section_title(bloque.tabla_titulo, "")
+            st.dataframe(bloque.tabla, width="stretch", hide_index=True)
+
+    # --- Correlacion rolling de un par elegido ---------------------------------
     with styles.card("corr-par"):
         styles.icon_corner("∿")
         styles.section_title(
             "Correlacion rolling de un par",
-            "Correlacion movil (ventana 63d ≈ 1 trimestre) del par elegido, con sombreado de crisis. "
-            "Muestra COMO evoluciona el acoplamiento en el tiempo, no solo su promedio por regimen.",
+            "El mapa de calor da un promedio por regimen; esta linea muestra cuando ocurre "
+            "el acoplamiento a lo largo del tiempo.",
         )
         c1, c2, c3 = st.columns([3, 3, 2])
         idx_def_a = activos_sel.index(foco) if foco in activos_sel else 0
@@ -315,33 +353,34 @@ def render_correlacion(retornos, regimen_din, regimen_filtro, activos_sel, min_o
             ventana = st.select_slider("Ventana (dias)", options=[21, 42, 63, 126, 252], value=63,
                                        key="corr_win")
 
+        bloque_par = narrativa.correlacion_par(retornos, regimen_din, par_a, par_b, ventana,
+                                               crisis_din)
+        styles.lectura(bloque_par.eyebrow, bloque_par.lead, bloque_par.puntos)
+
         roll = retornos[par_a].rolling(ventana, min_periods=int(ventana * 0.6)).corr(retornos[par_b])
         media_calma = roll[regimen_din.reindex(roll.index) == "Calma"].mean()
         media_crisis = roll[regimen_din.reindex(roll.index) == "Crisis"].mean()
 
         figp = go.Figure()
-        crisis_bool = crisis_din.reindex(roll.index).fillna(False)
-        if crisis_bool.any():
-            bloques = (crisis_bool != crisis_bool.shift()).cumsum()
-            for _, grupo in crisis_bool[crisis_bool].groupby(bloques[crisis_bool]):
-                figp.add_vrect(x0=grupo.index.min(), x1=grupo.index.max(),
-                               fillcolor=styles.RED, opacity=0.10, line_width=0)
+        _bandas_crisis(figp, crisis_din.reindex(roll.index))
+        figp.add_hline(y=0, line_color=styles.GRID, line_width=1.5)
         figp.add_trace(go.Scatter(
-            x=roll.index, y=roll, mode="lines", line=dict(color=styles.TEAL, width=1.8),
+            x=roll.index, y=roll, mode="lines", line=dict(color=styles.DEEP, width=2),
             name=f"{par_a}–{par_b}",
             hovertemplate=f"{par_a}–{par_b}<br>%{{x|%Y-%m-%d}}: %{{y:.2f}}<extra></extra>",
         ))
-        for y, txt, col in [(media_calma, "media calma", styles.NAVY), (media_crisis, "media crisis", styles.RED)]:
+        for y, txt, col in [(media_calma, "media calma", styles.CALMA),
+                            (media_crisis, "media crisis", styles.CRISIS)]:
             if pd.notna(y):
-                figp.add_hline(y=y, line_dash="dot", line_color=col,
-                               annotation_text=f"{txt}: {y:.2f}", annotation_font_color=col,
+                figp.add_hline(y=y, line_dash="dot", line_color=col, line_width=1.5,
+                               annotation_text=f"{txt}: {y:.2f}",
+                               annotation_font=dict(color=col, size=11),
                                annotation_position="top left")
         figp.update_layout(
-            **styles.PLOTLY_TRANSPARENT,
-            font=dict(family=styles.FONT_SANS, color=styles.NAVY),
-            yaxis=dict(title="Correlacion rolling", gridcolor=styles.GRID, range=[-1, 1]),
-            xaxis=dict(gridcolor=styles.GRID),
-            height=340, margin=dict(t=20, b=10, l=10, r=10), showlegend=False,
+            **styles.PLOTLY_BASE,
+            yaxis=styles.eje(title="Correlacion rolling", range=[-1, 1]),
+            xaxis=styles.eje(),
+            height=350, margin=dict(t=24, b=10, l=10, r=10), showlegend=False,
         )
         st.plotly_chart(figp, width="stretch")
 
@@ -360,11 +399,7 @@ def _stats_drawdown(dd):
         peor = s.min()
         post = s.loc[valle:]
         recuperado = post[post >= -1e-6]
-        if len(recuperado):
-            dias_rec = (recuperado.index[0] - valle).days
-            rec_txt = f"{dias_rec} d"
-        else:
-            rec_txt = "sin recuperar"
+        rec_txt = f"{(recuperado.index[0] - valle).days} d" if len(recuperado) else "sin recuperar"
         filas.append({
             "Activo": ETIQUETAS_ACTIVO.get(a, a),
             "_codigo": a,
@@ -372,6 +407,9 @@ def _stats_drawdown(dd):
             "Fecha valle": valle.date().isoformat(),
             "Recuperacion": rec_txt,
         })
+    if not filas:
+        return pd.DataFrame(columns=["Activo", "_codigo", "Peor drawdown",
+                                     "Fecha valle", "Recuperacion"])
     return pd.DataFrame(filas).sort_values("Peor drawdown")
 
 
@@ -379,7 +417,6 @@ def render_drawdown(drawdown, crisis_din, activos_sel, regimen_filtro, foco):
     dd = drawdown[activos_sel]
     stats = _stats_drawdown(dd)
 
-    # Hero row
     col1, col2, col3 = st.columns(3)
     if not stats.empty:
         peor_fila = stats.iloc[0]
@@ -388,59 +425,54 @@ def render_drawdown(drawdown, crisis_din, activos_sel, regimen_filtro, foco):
             with styles.card("dd-peor", variant="dark"):
                 styles.icon_corner("↓")
                 styles.hero_metric(f"{peor_fila['Peor drawdown']:.1f}%", "PEOR DRAWDOWN",
-                                    sub=f"{peor_fila['Activo']} · {peor_fila['Fecha valle']}")
+                                   sub=f"{peor_fila['Activo']} · valle {peor_fila['Fecha valle']}")
         with col2:
             with styles.card("dd-prom"):
-                styles.hero_metric(f"{stats['Peor drawdown'].mean():.1f}%", "PEOR DD PROMEDIO",
-                                    sub=f"{len(stats)} activos en vista")
+                styles.hero_metric(f"{stats['Peor drawdown'].mean():.1f}%", "PEOR CAIDA PROMEDIO",
+                                   sub=f"media de los {len(stats)} activos en vista")
         with col3:
             with styles.card("dd-sinrec"):
                 styles.hero_metric(f"{len(sin_rec)}", "SIN RECUPERAR",
-                                    sub="no vuelven a su maximo previo")
+                                   sub="no vuelven a su maximo previo dentro del rango")
 
     with styles.card("drawdown-chart"):
         styles.icon_corner("~")
         styles.section_title(
             "Drawdown (underwater plot)",
-            "Caida desde el maximo historico previo, por activo. Las bandas rojas marcan crisis. "
-            "La diversificacion falla justo cuando todo cae a la vez.",
+            "Distancia de cada activo respecto a su propio maximo previo. Cero = en maximos.",
         )
+
+        bloque = narrativa.drawdown(dd, stats, crisis_din, activos_sel, foco)
+        styles.lectura(bloque.eyebrow, bloque.lead, bloque.puntos)
+
         fig4 = go.Figure()
-        crisis_bool = crisis_din.reindex(dd.index).fillna(False)
-        if crisis_bool.any():
-            bloques = (crisis_bool != crisis_bool.shift()).cumsum()
-            for _, grupo in crisis_bool[crisis_bool].groupby(bloques[crisis_bool]):
-                fig4.add_vrect(x0=grupo.index.min(), x1=grupo.index.max(),
-                               fillcolor=styles.RED, opacity=0.08, line_width=0)
+        _bandas_crisis(fig4, crisis_din.reindex(dd.index))
         for a in activos_sel:
             fig4.add_trace(go.Scatter(
                 x=dd.index, y=dd[a] * 100, mode="lines", name=ETIQUETAS_ACTIVO.get(a, a),
-                line=dict(color=styles.color_activo(a), width=_ancho(a, foco, base=1.3)),
+                line=dict(color=styles.color_activo(a), width=_ancho(a, foco, base=1.5)),
                 opacity=_opacidad(a, foco),
                 hovertemplate=f"{ETIQUETAS_ACTIVO.get(a, a)}<br>%{{x|%Y-%m-%d}}: %{{y:.1f}}%<extra></extra>",
             ))
         fig4.update_layout(
-            **styles.PLOTLY_TRANSPARENT,
-            font=dict(family=styles.FONT_SANS, color=styles.NAVY),
+            **styles.PLOTLY_BASE,
             hovermode="x unified",
-            yaxis=dict(title="Drawdown (%)", gridcolor=styles.GRID, rangemode="tozero"),
-            xaxis=dict(gridcolor=styles.GRID),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            height=460, margin=dict(t=30, b=10, l=10, r=10),
+            yaxis=styles.eje(title="Drawdown (%)", rangemode="tozero"),
+            xaxis=styles.eje(),
+            legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="left", x=0,
+                        font=dict(size=11), bgcolor="rgba(0,0,0,0)"),
+            height=470, margin=dict(t=36, b=10, l=10, r=10),
         )
         st.plotly_chart(fig4, width="stretch")
 
-    with styles.card("drawdown-rank"):
+    with styles.card("drawdown-rank", variant="soft"):
         styles.section_title(
             "Ranking de peor drawdown y recuperacion",
-            "Ordenado de la peor caida a la menos mala. 'Recuperacion' = dias desde el valle hasta "
+            "De la peor caida a la menos mala. 'Recuperacion' = dias desde el valle hasta "
             "volver al maximo previo.",
         )
-        if not stats.empty:
-            cols = ["Activo", "Peor drawdown", "Fecha valle", "Recuperacion"]
-            tabla = stats[cols].copy()
-            tabla["Peor drawdown"] = tabla["Peor drawdown"].map(lambda v: f"{v:.1f}%")
-            st.dataframe(tabla, width="stretch", hide_index=True)
+        if bloque.tabla is not None:
+            st.dataframe(bloque.tabla, width="stretch", hide_index=True)
 
 
 # ============================================================================
@@ -448,76 +480,59 @@ def render_drawdown(drawdown, crisis_din, activos_sel, regimen_filtro, foco):
 # ============================================================================
 def render_distribucion(retornos, regimen_din, regimen_filtro, activos_sel, foco):
     with styles.card("distribucion"):
-        styles.icon_corner("◔")
+        styles.icon_corner("◑")
         styles.section_title(
             "Distribucion de retornos por regimen",
-            "Violines de retornos diarios (%) por activo, Calma vs Crisis. En crisis la distribucion "
-            "se ensancha y las colas engordan: los dias extremos dejan de ser raros (riesgo de cola).",
+            "Violines de retornos diarios (%) por activo: mitad fria calma, mitad calida crisis.",
         )
 
+        bloque = narrativa.distribucion(retornos, regimen_din, regimen_filtro, activos_sel, foco)
+        styles.lectura(bloque.eyebrow, bloque.lead, bloque.puntos)
+
         regimen_ret = regimen_din.reindex(retornos.index)
-        etiquetas_x = [ETIQUETAS_ACTIVO.get(a, a) for a in activos_sel]
 
         fig5 = go.Figure()
-        datos_largos = []
         for a in activos_sel:
-            for reg, color in [("Calma", styles.TEAL), ("Crisis", styles.RED)]:
+            for reg, color in [("Calma", styles.CALMA), ("Crisis", styles.CRISIS)]:
                 if regimen_filtro not in ("Ambos", reg):
                     continue
                 serie = (retornos[a][regimen_ret == reg] * 100).dropna()
                 if serie.empty:
                     continue
-                datos_largos.append((a, reg, serie))
-
-        for a, reg, serie in datos_largos:
-            color = styles.TEAL if reg == "Calma" else styles.RED
-            op = 1.0 if (foco == SIN_FOCO or a == foco) else 0.28
-            fig5.add_trace(go.Violin(
-                x=[ETIQUETAS_ACTIVO.get(a, a)] * len(serie), y=serie.values,
-                name=reg, legendgroup=reg, scalegroup=reg, showlegend=False,
-                side="negative" if reg == "Calma" else "positive",
-                line_color=color, fillcolor=color, opacity=op, points=False,
-                meanline_visible=True, width=0.9,
-                hovertemplate=f"{ETIQUETAS_ACTIVO.get(a, a)} · {reg}<br>%{{y:.2f}}%<extra></extra>",
-            ))
+                op = 1.0 if (foco == SIN_FOCO or a == foco) else 0.25
+                fig5.add_trace(go.Violin(
+                    x=[ETIQUETAS_ACTIVO.get(a, a)] * len(serie), y=serie.values,
+                    name=reg, legendgroup=reg, scalegroup=reg, showlegend=False,
+                    side="negative" if reg == "Calma" else "positive",
+                    line=dict(color=color, width=1.2), fillcolor=color, opacity=op * 0.75,
+                    points=False, meanline_visible=True, width=0.9,
+                    hovertemplate=f"{ETIQUETAS_ACTIVO.get(a, a)} · {reg}<br>%{{y:.2f}}%<extra></extra>",
+                ))
         # Trazas fantasma solo para la leyenda Calma/Crisis
-        for reg, color in [("Calma", styles.TEAL), ("Crisis", styles.RED)]:
+        for reg, color in [("Calma", styles.CALMA), ("Crisis", styles.CRISIS)]:
             if regimen_filtro in ("Ambos", reg):
                 fig5.add_trace(go.Scatter(x=[None], y=[None], mode="markers",
                                           marker=dict(color=color, size=10), name=reg))
 
         fig5.update_layout(
             violinmode="overlay",
-            **styles.PLOTLY_TRANSPARENT,
-            font=dict(family=styles.FONT_SANS, color=styles.NAVY),
-            yaxis=dict(title="Retorno diario (%)", gridcolor=styles.GRID, zeroline=True,
-                       zerolinecolor=styles.GRID),
-            xaxis=dict(gridcolor=styles.GRID),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            height=480, margin=dict(t=30, b=10, l=10, r=10),
+            **styles.PLOTLY_BASE,
+            yaxis=styles.eje(title="Retorno diario (%)", zeroline=True, zerolinecolor=styles.GRID,
+                             zerolinewidth=1.5),
+            xaxis=styles.eje(showgrid=False),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                        font=dict(size=11), bgcolor="rgba(0,0,0,0)"),
+            height=490, margin=dict(t=36, b=10, l=10, r=10),
         )
         st.plotly_chart(fig5, width="stretch")
 
-    with styles.card("dist-colas"):
+    with styles.card("dist-colas", variant="soft"):
         styles.section_title(
-            "Cuantificacion de las colas (curtosis y peor dia)",
+            "Cuantificacion de las colas",
             "Curtosis en exceso > 0 = colas mas gordas que una normal. El peor dia por regimen "
             "muestra cuanto peor puede ser un solo dia en crisis.",
         )
-        filas = []
-        regimen_ret = regimen_din.reindex(retornos.index)
-        for a in activos_sel:
-            fila = {"Activo": ETIQUETAS_ACTIVO.get(a, a)}
-            for reg in ("Calma", "Crisis"):
-                serie = retornos[a][regimen_ret == reg].dropna()
-                if len(serie) > 3:
-                    fila[f"Curtosis {reg}"] = f"{serie.kurtosis():.1f}"
-                    fila[f"Peor dia {reg}"] = f"{serie.min() * 100:.1f}%"
-                else:
-                    fila[f"Curtosis {reg}"] = "—"
-                    fila[f"Peor dia {reg}"] = "—"
-            filas.append(fila)
-        st.dataframe(pd.DataFrame(filas), width="stretch", hide_index=True)
+        st.dataframe(bloque.tabla, width="stretch", hide_index=True)
 
 
 # ============================================================================
@@ -528,10 +543,9 @@ def render_contagio(retornos, regimen_din, activos_sel, foco):
         styles.icon_corner("◈")
         styles.section_title(
             "Red de contagio",
-            "Grafo de correlaciones: cada nodo es un activo y cada arista un par cuya correlacion "
-            "supera el umbral. Al pasar de Calma a Crisis aparecen mas aristas y mas gruesas: el "
-            "mercado se vuelve un solo bloque.",
-            badge_html=styles.badge("OPCIONAL · STRETCH", variant="amber"),
+            "Grafo de correlaciones: cada nodo es un activo y cada arista un par por encima "
+            "del umbral. Al pasar de calma a crisis el mercado se vuelve un solo bloque.",
+            badge_html=styles.badge("opcional · stretch", variant="amber"),
         )
 
         if len(activos_sel) < 2:
@@ -546,11 +560,15 @@ def render_contagio(retornos, regimen_din, activos_sel, foco):
             regimen_red = st.radio("Regimen a dibujar", ["Calma", "Crisis"], horizontal=True,
                                    index=1, key="contagio_regimen")
 
+        bloque = narrativa.contagio(retornos, regimen_din, activos_sel, umbral_arista,
+                                    regimen_red, MIN_OBS_CORR, foco)
+        styles.lectura(bloque.eyebrow, bloque.lead, bloque.puntos)
+
         regimen_ret = regimen_din.reindex(retornos.index)
         corr = retornos[activos_sel][regimen_ret == regimen_red].corr(min_periods=MIN_OBS_CORR)
 
         n = len(activos_sel)
-        angulos = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        angulos = np.linspace(np.pi / 2, np.pi / 2 + 2 * np.pi, n, endpoint=False)
         pos = {a: (np.cos(t), np.sin(t)) for a, t in zip(activos_sel, angulos)}
 
         fig6 = go.Figure()
@@ -564,12 +582,12 @@ def render_contagio(retornos, regimen_din, activos_sel, foco):
                 n_aristas += 1
                 x0, y0 = pos[a]
                 x1, y1 = pos[b]
-                col = styles.RED if r > 0 else styles.TEAL
+                col = styles.CRISIS if r > 0 else styles.CALMA
                 resaltar = foco == SIN_FOCO or foco in (a, b)
                 fig6.add_trace(go.Scatter(
                     x=[x0, x1], y=[y0, y1], mode="lines",
-                    line=dict(color=col, width=1 + 5 * abs(r)),
-                    opacity=(0.75 if resaltar else 0.10),
+                    line=dict(color=col, width=0.8 + 4.5 * abs(r)),
+                    opacity=(0.55 if resaltar else 0.08),
                     hoverinfo="text", text=f"{a}–{b}: {r:.2f}", showlegend=False,
                 ))
 
@@ -579,16 +597,15 @@ def render_contagio(retornos, regimen_din, activos_sel, foco):
             fig6.add_trace(go.Scatter(
                 x=[x], y=[y], mode="markers+text", text=[a], textposition="middle center",
                 textfont=dict(color="white", size=9, family=styles.FONT_SANS),
-                marker=dict(size=42, color=styles.color_activo(a),
-                            line=dict(color=styles.NAVY if a == foco and foco != SIN_FOCO else "white",
-                                      width=3 if a == foco and foco != SIN_FOCO else 1.5)),
-                opacity=(1.0 if foco_nodo else 0.3),
+                marker=dict(size=44, color=styles.color_activo(a),
+                            line=dict(color=styles.DEEP if a == foco and foco != SIN_FOCO else "white",
+                                      width=3 if a == foco and foco != SIN_FOCO else 2)),
+                opacity=(1.0 if foco_nodo else 0.28),
                 hovertemplate=f"{ETIQUETAS_ACTIVO.get(a, a)}<extra></extra>", showlegend=False,
             ))
 
         fig6.update_layout(
-            **styles.PLOTLY_TRANSPARENT,
-            font=dict(family=styles.FONT_SANS, color=styles.NAVY),
+            **styles.PLOTLY_BASE,
             xaxis=dict(visible=False, range=[-1.4, 1.4]),
             yaxis=dict(visible=False, range=[-1.4, 1.4], scaleanchor="x", scaleratio=1),
             height=560, margin=dict(t=10, b=10, l=10, r=10),
@@ -596,9 +613,114 @@ def render_contagio(retornos, regimen_din, activos_sel, foco):
         st.plotly_chart(fig6, width="stretch")
         styles.note(
             f"<b>{n_aristas}</b> aristas sobre el umbral |ρ|≥{umbral_arista:.2f} en regimen "
-            f"<b>{regimen_red}</b>. Rojo = correlacion positiva (se mueven juntos), "
-            f"teal = negativa (cobertura). Sube el umbral o cambia de regimen para ver el contagio."
+            f"<b>{regimen_red}</b>. Tono calido = correlacion positiva (se mueven juntos), "
+            f"frio = negativa (cobertura). El grosor codifica la fuerza del vinculo."
         )
+
+        if bloque.tabla is not None:
+            styles.section_title(bloque.tabla_titulo, "")
+            st.dataframe(bloque.tabla, width="stretch", hide_index=True)
+
+
+# ============================================================================
+# Self-report: PDF con las SEIS pantallas, al pie de cada vista
+# ============================================================================
+def construir_bloques(ctx):
+    """Calcula la lectura guiada de las seis pantallas con los parametros actuales.
+
+    Se ejecuta con independencia de la vista visible: el PDF siempre trae el
+    tablero completo. Los modulos interactivos (par de correlacion rolling, umbral
+    de contagio) usan lo que el usuario haya dejado en session_state, o su valor
+    por defecto si aun no ha entrado a esa pantalla.
+    """
+    bloques = [
+        narrativa.overview(ctx["precios"], ctx["vix"], ctx["crisis_din"], ctx["activos_sel"],
+                           ctx["umbral_vix"], ctx["rango_fechas"], ctx["regimen_filtro"],
+                           ctx["foco"]),
+        narrativa.volatilidad(ctx["vol"], ctx["regimen_din"], ctx["regimen_filtro"],
+                              ctx["activos_sel"], ctx["foco"]),
+    ]
+
+    if len(ctx["activos_sel"]) >= 2:
+        bloques.append(narrativa.correlacion(
+            ctx["retornos"], ctx["regimen_din"], ctx["regimen_filtro"], ctx["activos_sel"],
+            MIN_OBS_CORR, ctx["foco"]))
+
+        par_a = st.session_state.get("par_a")
+        par_b = st.session_state.get("par_b")
+        if par_a not in ctx["activos_sel"]:
+            par_a = ctx["activos_sel"][0]
+        if par_b not in ctx["activos_sel"] or par_b == par_a:
+            par_b = next(a for a in ctx["activos_sel"] if a != par_a)
+        bloques.append(narrativa.correlacion_par(
+            ctx["retornos"], ctx["regimen_din"], par_a, par_b,
+            st.session_state.get("corr_win", 63), ctx["crisis_din"]))
+
+    dd = ctx["drawdown"][ctx["activos_sel"]]
+    bloques.append(narrativa.drawdown(dd, _stats_drawdown(dd), ctx["crisis_din"],
+                                      ctx["activos_sel"], ctx["foco"]))
+    bloques.append(narrativa.distribucion(ctx["retornos"], ctx["regimen_din"],
+                                          ctx["regimen_filtro"], ctx["activos_sel"], ctx["foco"]))
+
+    if len(ctx["activos_sel"]) >= 2:
+        bloques.append(narrativa.contagio(
+            ctx["retornos"], ctx["regimen_din"], ctx["activos_sel"],
+            st.session_state.get("contagio_umbral", 0.5),
+            st.session_state.get("contagio_regimen", "Crisis"),
+            MIN_OBS_CORR, ctx["foco"]))
+
+    return bloques
+
+
+def render_self_report(ctx, vista_actual):
+    """Bloque de descarga al pie de cada pantalla."""
+    styles.rule()
+    with styles.card(vista_actual.lower(), variant="report"):
+        izq, der = st.columns([3, 2], vertical_alignment="center")
+        with izq:
+            styles.section_title("Self-report")
+            st.markdown(
+                '<div class="section-caption">Descarga un PDF con las <b>seis pantallas</b> '
+                '&mdash; no solo esta &mdash; con los datos y los insights ya redactados '
+                'para la seleccion de activos, el rango, el umbral de VIX y el filtro de '
+                'regimen que tienes puestos ahora mismo.</div>',
+                unsafe_allow_html=True,
+            )
+        with der:
+            firma = (
+                f"{sorted(ctx['activos_sel'])}|{ctx['rango_fechas']}|{ctx['umbral_vix']}"
+                f"|{ctx['regimen_filtro']}|{ctx['foco']}"
+                f"|{st.session_state.get('par_a')}|{st.session_state.get('par_b')}"
+                f"|{st.session_state.get('corr_win')}"
+                f"|{st.session_state.get('contagio_umbral')}"
+                f"|{st.session_state.get('contagio_regimen')}"
+            )
+            if st.session_state.get("_firma_pdf") != firma:
+                with st.spinner("Preparando el informe..."):
+                    bloques = construir_bloques(ctx)
+                    params = narrativa.resumen_parametros(
+                        ctx["activos_sel"], ctx["rango_fechas"], ctx["umbral_vix"],
+                        ctx["regimen_filtro"], ctx["foco"], len(ctx["precios"]),
+                        100 * ctx["crisis_din"].reindex(ctx["precios"].index).fillna(False).mean(),
+                    )
+                    st.session_state["_pdf"] = reporte.generar_pdf(params, bloques, vista_actual)
+                    st.session_state["_firma_pdf"] = firma
+
+            nombre = (f"self-report_riesgo-mercado_"
+                      f"{ctx['rango_fechas'][0]}_{ctx['rango_fechas'][1]}.pdf")
+            st.download_button(
+                "⤓  Descargar informe en PDF",
+                data=st.session_state["_pdf"],
+                file_name=nombre,
+                mime="application/pdf",
+                width="stretch",
+                key=f"dl_{vista_actual}",
+            )
+            st.markdown(
+                f'<div class="hero-sub">{len(st.session_state["_pdf"]) / 1024:.0f} KB · '
+                f'{len(ctx["activos_sel"])} activos · umbral VIX {ctx["umbral_vix"]}</div>',
+                unsafe_allow_html=True,
+            )
 
 
 # ============================================================================
@@ -684,10 +806,17 @@ drawdown = drawdown_todo.loc[mask_fecha, activos_sel]
 crisis_din = vix > umbral_vix
 regimen_din = pd.Series(np.where(crisis_din, "Crisis", "Calma"), index=vix.index, name="regimen")
 
+ctx = dict(
+    precios=precios, vix=vix, retornos=retornos, vol=vol, drawdown=drawdown,
+    crisis_din=crisis_din, regimen_din=regimen_din, activos_sel=activos_sel,
+    umbral_vix=umbral_vix, rango_fechas=rango_fechas, regimen_filtro=regimen_filtro, foco=foco,
+)
+
 # --- Topbar: titulo + nav + subtitulo ----------------------------------------
 with st.container(key="topbar", horizontal=True, vertical_alignment="center"):
     st.markdown(
-        '<div class="topbar-title">Anatomia del riesgo &middot; Calma vs Crisis</div>',
+        '<div class="topbar-title">Anatomia del riesgo '
+        '<span class="accent">&middot; Calma vs Crisis</span></div>',
         unsafe_allow_html=True,
     )
     seleccion = st.segmented_control(
@@ -700,7 +829,8 @@ if seleccion is None:
     seleccion = NAV_OPTIONS[0]
 
 if seleccion == "Overview":
-    render_overview(precios, vix, crisis_din, activos_sel, umbral_vix, rango_fechas, foco)
+    render_overview(precios, vix, crisis_din, activos_sel, umbral_vix, rango_fechas,
+                    regimen_filtro, foco)
 elif seleccion == "Volatilidad":
     render_volatilidad(vol, regimen_din, regimen_filtro, activos_sel, foco)
 elif seleccion == "Correlacion":
@@ -713,7 +843,9 @@ elif seleccion == "Distribucion":
 elif seleccion == "Contagio":
     render_contagio(retornos, regimen_din, activos_sel, foco)
 
+render_self_report(ctx, seleccion)
+
 st.caption(
-    "Fases A-C completas · 6 vistas coordinadas · datos reales de Yahoo Finance (2018–2026). "
-    "Limitaciones de datos documentadas en el README y en la nota de cada vista."
+    "Datos reales de Yahoo Finance (2018–2026). "
+    "Limitaciones de datos documentadas en el README y en la nota metodologica del informe."
 )

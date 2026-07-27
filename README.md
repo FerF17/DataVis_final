@@ -57,6 +57,28 @@ de forma **global** a todas las vistas.
 | 5 | **Distribución** | Violines de retornos diarios por régimen y activo (colas gordas / riesgo de cola) + tabla de curtosis en exceso y peor día por régimen. |
 | 6 | **Contagio** *(opcional)* | Grafo de correlaciones sobre un umbral ajustable, por régimen: al pasar de Calma a Crisis aparecen más aristas y más gruesas — el mercado se vuelve un solo bloque. |
 
+### Lectura guiada (descripciones parametrizadas)
+
+Cada pantalla abre con un bloque **"Como leer esta pantalla"** que no está escrito a mano
+para SPY/TLT/etc.: se resuelve en vivo contra los datos filtrados. Cambia los ETFs
+seleccionados, el rango, el umbral de VIX o el filtro de régimen y las frases se
+recalculan — nombran el activo que más multiplica su volatilidad, el par que más se acopla
+en crisis, el día de dolor más generalizado, el activo que queda aislado en la red…
+Sirve para que cualquiera entienda el gráfico que tiene delante sin conocer el dataset.
+
+Vive en **`narrativa.py`**; cada vista devuelve un `Bloque` (frase principal + bullets +
+tabla de respaldo) que `styles.lectura()` pinta en pantalla y `reporte.py` vuelca al PDF.
+Una sola fuente de verdad: el tablero y el informe nunca pueden decir cosas distintas.
+
+### Self-report en PDF
+
+Al pie de **todas** las vistas hay un bloque de descarga que genera un PDF con **las seis
+pantallas** (no solo la visible), con los parámetros activos en portada, un resumen
+ejecutivo de un hallazgo por pantalla, la lectura guiada completa de cada una, sus tablas
+de datos y una nota metodológica de cierre. Implementado en **`reporte.py`** con
+`reportlab` — solo texto y tablas, sin exportar imágenes de Plotly, así que no hace falta
+`kaleido` ni un binario de Chrome en el servidor.
+
 ### Interacciones
 
 - **Filtro de régimen** (Ambos / Calma / Crisis) global.
@@ -74,6 +96,8 @@ de forma **global** a todas las vistas.
 ```
 ├── app.py                  # Dashboard Streamlit (6 vistas + interacciones). Entrypoint.
 ├── styles.py               # Sistema de diseño: paleta, CSS de cards/nav/badges, helpers.
+├── narrativa.py            # Lectura guiada parametrizada de cada vista (Bloque).
+├── reporte.py              # Self-report: PDF de las 6 pantallas (reportlab).
 ├── pipeline.py             # Pipeline de datos: build_dataset() / cargar_datos().
 ├── poc_riesgo_mercado.py   # PoC original (congelado, referencia histórica).
 ├── requirements.txt        # Dependencias con versión fijada.
@@ -147,9 +171,31 @@ python pipeline.py    # vuelve a descargar y regenera todo en ./salidas/
 
 ---
 
+## 🎨 Sistema visual
+
+Paleta de marca: `#FFF1E7` crema (lienzo) · `#B5D2E6` azul niebla (acentos) · `#326080`
+azul hondo (tinta y superficies oscuras) · `#805232` tierra (acento cálido, régimen de
+crisis). Tipografía serif para titulares y números-héroe, sans para el resto.
+
+Los **colores de datos** son versiones con más croma de esos mismos tonos: la paleta de
+marca es deliberadamente desaturada y, aplicada tal cual a marcas finas (líneas de 2 px,
+celdas, barras), no supera los umbrales de separación para daltonismo. Todos los sets
+(par Calma/Crisis, escala divergente de correlación, paleta cualitativa de 10 activos)
+están validados con un verificador de paletas: banda de luminosidad, piso de croma,
+separación CVD deutan/protan/tritan y contraste contra el lienzo. Los tres tonos que
+quedan por debajo de 3:1 de contraste viajan siempre acompañados de leyenda, etiqueta
+directa y tabla de datos.
+
+- **Calma `#2472A6` / Crisis `#A85E24`** — azul vs. tierra, no rojo-verde.
+- **Correlación** — escala divergente frío → neutro → cálido, centrada en 0: el extremo
+  cálido (+1, "todo se mueve junto") es el que la tesis quiere que salte a la vista.
+- **Activos** — 10 tonos de orden fijo, nunca ciclados por la selección: un activo
+  conserva su color en las seis vistas (requisito del resaltado enlazado).
+
 ## 🛠️ Stack
 
-Python 3.11+ · Streamlit 1.56 · Plotly 6.7 · pandas 3.0 · numpy 2.4 · yfinance 1.5 · pyarrow 23.
+Python 3.11+ · Streamlit 1.56 · Plotly 6.7 · pandas 3.0 · numpy 2.4 · yfinance 1.5 ·
+pyarrow 23 · reportlab 5 (self-report en PDF).
 
 ## 📄 Licencia / uso
 

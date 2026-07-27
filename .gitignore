@@ -28,6 +28,10 @@ salidas/
 # ---- Documentacion interna (no se publica) ----
 # Plan de trabajo / bitacora interna de la maestria: se mantiene local, no en el repo.
 PLAN_INTERNO.md
+Pitch_Riesgo_Mercado.pptx
+Pitch_Riesgo_Mercado_Final.pptx
+INTERPRETACION_Y_PITCH.md
+autoevaluacion.md
 
 # ---- Sistema operativo ----
 .DS_Store

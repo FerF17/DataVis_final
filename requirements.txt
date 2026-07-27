@@ -11,3 +11,7 @@ pandas==3.0.2
 numpy==2.4.4
 yfinance==1.5.1
 pyarrow==23.0.1
+# Self-report: generacion del PDF con los datos e insights de las 6 pantallas.
+# Solo texto y tablas (sin exportar imagenes de Plotly), asi que no hace falta
+# kaleido ni un binario de Chrome en el servidor.
+reportlab==5.0.0
